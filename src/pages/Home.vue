@@ -1,79 +1,129 @@
 <script setup>
-import { onMounted, ref, watch } from 'vue';
+import { computed, inject, onMounted, provide, reactive, ref, watch } from 'vue';
 import axios from 'axios';
-
-import Card from '../components/Card.vue';
-import Header from '../components/Header.vue';
 import CardList from '../components/CardList.vue';
+import debounce from 'lodash.debounce';
 
 const items = ref([]);
 
-const sortBy = ref('');
-const searchQuery = ref('');
+const { drawer, addToDrawer, deleteFromDrawer } = inject('drawer');
+
+const filters = reactive({
+  searchQuery: '',
+  sortBy: ''
+})
+
+const handleAdd = (item) => {
+  if (!item.isAdded) {
+    addToDrawer(item);
+  } else {
+    deleteFromDrawer(item);
+  }
+}
 
 const onChangeSelect = (event) => {
-  sortBy.value = event.target.value
+  filters.sortBy = event.target.value
 }
 
-const onChangeSearchInput = (event) => {
-  searchQuery.value = event.target.value
+const onChangeSearchInput = debounce ((event) => {
+  filters.searchQuery = event.target.value
+}, 100)
+
+const fetchItems =  async () => {
+  try {
+    const params = {
+      sortBy: filters.sortBy,
+    }
+
+    if (filters.searchQuery) {
+      params.title = `*${filters.searchQuery}*`
+    }
+
+    const { data } = await axios.get(`https://f99823dee7774502.mokky.dev/items`, { params });
+    items.value = data.map(item => ({ ...item, isFavorite: false, isAdded: false, favoriteId: null }));
+  } catch (error) {
+    console.log(error);
+  }
 }
+
+const fetchFavorities = async () => {
+  try {
+    const { data } = await axios.get(`https://f99823dee7774502.mokky.dev/favorities`);
+    items.value = items.value.map(item => {
+      const favorities = data.find(favorite => favorite.itemId === item.id)
+      if (!favorities) {
+        return item
+      }
+      return {
+        ...item,
+        isFavorite: true,
+        favoriteId: favorities.id
+      }
+    });
+  } catch (error) {
+    console.log(error);
+  }
+}
+
+const addToFavorities = async (item) => {
+  try {
+    const idx = items.value.findIndex((i) => i.id === item.id);
+
+    if (idx === -1) return;
+
+    if (!item.isFavorite) {
+      const payload = {
+        itemId: item.id,
+        item
+      };
+      items.value[idx].isFavorite = true;
+      const { data } = await axios.post(`https://f99823dee7774502.mokky.dev/favorities`, payload);
+      items.value[idx].favoriteId = data.id;
+    } else {
+      items.value[idx].isFavorite = false;
+      await axios.delete(`https://f99823dee7774502.mokky.dev/favorities/${item.favoriteId}`);
+      items.value[idx].favoriteId = null;
+    }
+  } catch (error) {
+    console.log(error);
+  }
+};
+
 
 onMounted(async () => {
-    try {
-      const { data } = await axios.get('https://f99823dee7774502.mokky.dev/items');
-      items.value = data;
-    } catch (error) {
-      console.log(error);
-    }
+  await fetchItems();
+  await fetchFavorities();
+
+  items.value = items.value.map(item => ({ ...item, isAdded: drawer.value.some((i)=> i.id === item.id) }));
 });
+watch(filters, fetchItems)
 
-watch(sortBy, async () => {
-  try {
-      const { data } = await axios.get('https://f99823dee7774502.mokky.dev/items?sortBy=' + sortBy.value);
-      items.value = data;
-    } catch (error) {
-      console.log(error);
-    }
+watch(drawer, () => {
+  items.value = items.value.map(item => ({ ...item, isAdded: false }));
 })
 
-watch(searchQuery, async () => {
-  try {
-      const { data } = await axios.get('https://f99823dee7774502.mokky.dev/items?searchQuery=' + searchQuery.value);
-      items.value = data;
-    } catch (error) {
-      console.log(error);
-    }
-})
 </script>
 
 <template>
-  <div class="bg-white w-3/5 m-auto rounded-xl shadow-xl shadow-grey-200 mt-20">
-    <Header />
-
-    <div class="p-10">
-      <div class="flex justify-between items-center mb-10">
-        <h1 class="text-3xl font-bold">Все кроссовки</h1>
-        <div class="flex items-center gap-4">
-          <select @change="onChangeSelect" class="py-2 px-3 border border-gray-200 focus:border-gray-400 rounded-md focus:outline-none">
-            <option value="name">По названию</option>
-            <option value="price">По цене (дешевые)</option>
-            <option value="-price">По цене (дорогие)</option>
-          </select>
-          <div class="relative">
-            <input @input="onChangeSearchInput"
-              type="text"
-              class="border border-gray-200 rounded-md py-2 pl-10 pr-4 focus:outline-none focus:border-gray-400"
-              placeholder="Поиск..."
-            />
-            <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <img src="/search.svg" />
-            </div>
-          </div>
+   <div class="flex justify-between items-center mb-10">
+    <h1 class="text-3xl font-bold">Все кроссовки</h1>
+    <div class="flex items-center gap-4">
+      <select @change="onChangeSelect" class="py-2 px-3 border border-gray-200 focus:border-gray-400 rounded-md focus:outline-none">
+        <option value="name">По названию</option>
+        <option value="price">По цене (дешевые)</option>
+        <option value="-price">По цене (дорогие)</option>
+      </select>
+      <div class="relative">
+        <input @input="onChangeSearchInput"
+          type="text"
+          class="border border-gray-200 rounded-md py-2 pl-10 pr-4 focus:outline-none focus:border-gray-400"
+          placeholder="Поиск..."
+        />
+        <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+          <img src="/search.svg" />
         </div>
       </div>
-
-      <CardList :items="items"/>
     </div>
   </div>
+  <CardList :items="items" @addToFavorities="addToFavorities" @handleAdd="handleAdd" />
 </template>
